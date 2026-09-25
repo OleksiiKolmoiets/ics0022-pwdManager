@@ -3,7 +3,7 @@
 ## Project idea
 
 I will build a small command-line password manager in C for Linux. It will store service names, usernames and passwords in one encrypted file. The user will unlock the file with a master password.
-The program will support one local user and five commands: `init`, `add`, `list`, `get` and `delete`. There will be no server, website or separate account registration. To keep the first version manageable, it will store at most 100 entries.
+The program will support one local user and five commands: `init`, `add`, `list`, `get` and `delete`. There will be no server, website or separate account registration.
 
 ## Manual
 
