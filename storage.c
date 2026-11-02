@@ -1,1 +1,3 @@
-/* TODO: Read and save the encrypted vault with permission checks, locking and safe file updates. */
+#include "pwmgr.h"
+
+/* Vault reading and saving functions will be implemented here. */

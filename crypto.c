@@ -1,1 +1,3 @@
-/* TODO: Derive the key, generate salt and fresh nonces, and encrypt or verify and decrypt entries. */
+#include "pwmgr.h"
+
+/* Key derivation and encryption/decryption functions will be implemented here. */
