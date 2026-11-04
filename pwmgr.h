@@ -24,6 +24,13 @@ typedef struct {
     char password[MAX_PASSWORD_LENGTH + 1];
 } Entry;
 
+typedef struct {
+    Entry entries[MAX_ENTRIES];
+    size_t count;
+    unsigned char salt[crypto_pwhash_SALTBYTES];
+    unsigned char key[crypto_secretbox_KEYBYTES];
+} Vault;
+
 int storage_open(const char *directory);
 void storage_close(void);
 
@@ -46,5 +53,11 @@ int decrypt_data(const unsigned char *ciphertext, size_t ciphertext_len,
 
 int read_text(const char *prompt, char *buffer, size_t size);
 int read_entry(Entry *entry);                 
+
+int open_vault_directory(void);
+
+int vault_open(const char *password, Vault *vault);
+int vault_save(const Vault *vault);
+void vault_close(Vault *vault);
 
 #endif
