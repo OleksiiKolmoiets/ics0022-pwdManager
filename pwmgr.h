@@ -14,6 +14,16 @@
 
 #define VAULT_HEADER_SIZE (4 + crypto_pwhash_SALTBYTES + crypto_secretbox_NONCEBYTES)
 
+#define MAX_SERVICE_LENGTH 64
+#define MAX_USERNAME_LENGTH 128
+#define MAX_ENTRIES 100
+
+typedef struct {
+    char service[MAX_SERVICE_LENGTH + 1];
+    char username[MAX_USERNAME_LENGTH + 1];
+    char password[MAX_PASSWORD_LENGTH + 1];
+} Entry;
+
 int storage_open(const char *directory);
 void storage_close(void);
 
@@ -33,5 +43,8 @@ int encrypt_data(const unsigned char *plaintext, size_t plaintext_len,
 int decrypt_data(const unsigned char *ciphertext, size_t ciphertext_len,
                  const unsigned char *key, const unsigned char *nonce,
                  unsigned char *plaintext, size_t plaintext_size);
+
+int read_text(const char *prompt, char *buffer, size_t size);
+int read_entry(Entry *entry);                 
 
 #endif
