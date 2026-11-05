@@ -1,21 +1,29 @@
-# Password Manager — Checkpoint 1
+# Password Manager — Checkpoint 2
 
 ## Project idea
 
-I will build a small command-line password manager in C for Linux. It will store service names, usernames and passwords in one encrypted file. The user will unlock the file with a master password.
-The program will support one local user and five commands: `init`, `add`, `list`, `get` and `delete`. There will be no server, website or separate account registration.
+This is a small command-line password manager in C for Linux. It stores service names, usernames and passwords in one encrypted file. The user unlocks the file with a master password.
+The program supports one local user and five commands: `init`, `add`, `list`, `get` and `delete`. It has no server, website or separate account registration.
 
 ## Manual
 
 `init` - creates an empty encrypted vault. It asks the user for a master password and confirmation. It must refuse to overwrite an existing vault.
 
-`add` - adds a record with a service name, username and password. It then encrypts and saves the updated vault.
+`add` - asks for the master password, service name, username and password. It rejects duplicate service names, then encrypts and saves the updated vault.
 
-`list` - lists service names without showing any credentials.
+`list` - unlocks the vault and lists service names only.
 
-`get` - displays the username and password for a selected service.
+`get` - unlocks the vault and asks for a service name. It currently displays the service, username and a fixed password mask (`********`). It does not reveal or copy the stored password. Clipboard retrieval is planned for Checkpoint 3 so that passwords can be used without printing them in cleartext.
 
-`delete` - removes a selected record of a service from the file after confirmation. It then saves the updated vault.
+`delete` - unlocks the vault and asks for a service name. It removes the entry only after the user types exactly `yes`, then encrypts and saves the updated vault. Other answers cancel deletion. Deleting the final entry leaves a valid empty vault.
+
+## Current limits
+
+- Up to 100 entries and a vault file up to 64 KiB.
+- Service names up to 64 characters, usernames up to 128, and passwords up to 128.
+- Each field must be nonempty and contain printable ASCII characters. Spaces are allowed. Tabs, newlines and other control characters are rejected within fields.
+- Service names are case-sensitive. `Email` and `email` are distinct names.
+- `get` is currently a masked lookup. Usable password retrieval through the clipboard is remaining work for Checkpoint 3.
 
 ## Architecture
 
@@ -23,39 +31,39 @@ The program will support one local user and five commands: `init`, `add`, `list`
 
 The password manager has only one local user; thus, registration, usernames, roles or an account database are not required.
 
-It will:
-- During init, ask the user to choose a master password and enter it again for confirmation.
-- During later commands, ask for the existing master password.
-- Read the password without showing it in the terminal.
-- Check input length and reject input that is too long.
+It:
+- Reads master and credential passwords without showing them in the terminal.
+- Reads visible service names and usernames through bounded input.
+- Rejects empty, overlong and non-printable-ASCII input.
+- Collects the fields of a new credential entry.
+
+The command code in `main.c` requests master-password confirmation during `init` and enforces a minimum master-password length of 12 characters.
 
 ### 2. Encryption module `crypto.c`
 
 This module turns readable entries into encrypted data and converts them back when the correct master password is provided.
 
-It has 2 main jobs:
+It has two main jobs:
 - Key derivation: the module uses Argon2id to turn the master password and salt into an encryption key.
 - Encryption and decryption: the module uses the libsodium library to encrypt the entries or verify and decrypt an existing vault.
 
 The salt is saved alongside the encrypted data.
 
-When adding a new record, this module also generates a random nonce needed by the encryption operation.
+Every encryption operation generates a fresh random nonce. Unlocking derives the key again using the saved salt. Successful authenticated decryption verifies the entered master password.
 
 ### 3. Storage layer `storage.c`
 
 This module handles the files on disk.
 
-It will:
+It:
 
-- Create the private directory and vault file.
-- Read the encrypted vault into memory.
-- Save updated encrypted data.
-- Check permissions, file type and file-operation errors.
-- Coordinate access so two running copies do not overwrite each other’s changes.
+- Creates the private directory and vault file.
+- Reads the encrypted vault into memory.
+- Saves updated encrypted data.
+- Checks ownership, permissions, file type, hard-link count and file-operation errors.
+- Holds an exclusive lock during each record operation so cooperating program instances cannot overwrite each other’s changes.
 
-The planned location will be `~/.pwmgr/vault.pmv`.
-
-The directory will have `0700` permissions and the vault will have `0600`.
+The vault location is `~/.pwmgr/vault.pmv`. The directory uses `0700` permissions and the vault uses `0600`. A separate `vault.lock` file coordinates access. Unsafe ownership, permissions or file types are rejected.
 
 The storage layer only receives encrypted bytes and writes them or reads encrypted bytes and returns them.
 
@@ -63,7 +71,7 @@ To avoid overwriting the existing file, it writes the new encrypted data to a te
 
 ### 4. Main module `main.c`
 
-main.c connects the previously described modules and implements the commands. The individual modules provide the functions; main.c calls them in the correct order.
+`main.c` connects the modules and implements the commands. It represents credentials using `Entry` and `Vault`, parses decrypted records, serializes updated records, and coordinates authentication, encryption and storage. Shared types and function declarations are in `pwmgr.h`.
 
 ### Data Flow
 
@@ -82,7 +90,7 @@ main.c connects the previously described modules and implements the commands. Th
 | 6 | Vault in memory | Credentials remain in memory after use. | Minimize their lifetime and unnecessary copies. Clear sensitive buffers with `sodium_memzero()` before freeing them or exiting. |
 | 7 | Vault in memory | A buffer overflow exposes or corrupts sensitive memory. | Use bounded input, check buffer sizes before copying data, reserve space for null terminators and validate array indexes. |
 | 8 | Vault in memory | Incorrect memory handling causes invalid access or crashes. | Initialize pointers, check allocation results, free memory exactly once and never access freed memory. |
-| 9 | Interface | Listing entries accidentally exposes credentials. | Make `list` show service names only. Require an explicit `get` operation and confirmation before displaying a password. |
+| 9 | Interface | Output accidentally exposes passwords. | Make `list` show service names only and `get` show the username with a fixed password mask. Add explicit clipboard retrieval in Checkpoint 3. |
 | 10 | Interface | Special characters manipulate terminal output or break the file format. | Accept printable ASCII characters only. Reject tabs, newlines and control characters. Use fixed output formats such as `printf("%s", value)`. |
 | 11 | Interface | An error message reveals sensitive data. | Use fixed error messages without passwords, keys or decrypted contents, such as “Wrong master password or damaged vault.” |
 
@@ -98,7 +106,7 @@ This readable text exists only temporarily in memory. It is encrypted before bei
 
 ### Cryptographic scheme
 
-The application will use libsodium for key derivation, encryption and random-value generation.
+The application uses libsodium for key derivation, encryption and random-value generation.
 
 | Component | Decision |
 |---|---|
@@ -126,7 +134,7 @@ Libsodium produces the authentication tag and ciphertext together. The program w
 
 ## Build and run
 
-The C source files have not been implemented yet. These commands describe how the program will be built and run after implementation.
+Build and run the program from the repository directory. Use the five commands below through an interactive terminal.
 
 ### Requirements
 
@@ -144,7 +152,8 @@ On Windows, use a Linux environment such as Ubuntu in WSL for these commands.
 From the repository directory containing `main.c`, `auth.c`, `crypto.c` and `storage.c`, run:
 
 ```bash
-gcc -std=c11 -Wall -Wextra -Wpedantic main.c auth.c crypto.c storage.c -lsodium -o pwmgr
+gcc -std=c11 -Wall -Wextra -Wpedantic -Werror=return-type \
+    main.c auth.c crypto.c storage.c -lsodium -o pwmgr
 ```
 
 This will create an executable named `pwmgr`.
