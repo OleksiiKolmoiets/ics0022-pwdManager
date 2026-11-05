@@ -357,9 +357,65 @@ static int get_entry(const char *password)
     return -1;
 }
 
+static int delete_entry(const char *password)
+{
+    Vault vault;
+
+    if (vault_open(password, &vault) != 0) {
+        return -1;
+    }
+
+    char service[MAX_SERVICE_LENGTH + 1];
+
+    if (read_text("Service: ", service, sizeof(service)) != 0) {
+        fprintf(stderr, "Invalid service name.\n");
+        vault_close(&vault);
+        return -1;
+    }
+
+    size_t index = 0;
+
+    while (index < vault.count &&
+           strcmp(vault.entries[index].service, service) != 0) {
+        index++;
+    }
+
+    if (index == vault.count) {
+        fprintf(stderr, "No entry found for this service.\n");
+        vault_close(&vault);
+        return -1;
+    }
+
+    char confirmation[4];
+
+    if (read_text("Type yes to delete this entry: ", confirmation,
+                  sizeof(confirmation)) != 0 ||
+        strcmp(confirmation, "yes") != 0) {
+        puts("Deletion cancelled.");
+        vault_close(&vault);
+        return 0;
+    }
+
+    for (size_t i = index; i + 1 < vault.count; i++) {
+        vault.entries[i] = vault.entries[i + 1];
+    }
+
+    vault.count--;
+    sodium_memzero(&vault.entries[vault.count], sizeof(vault.entries[0]));
+
+    int result = vault_save(&vault);
+    vault_close(&vault);
+
+    if (result == 0) {
+        puts("Entry deleted.");
+    }
+
+    return result;
+}
+
 int main(int argc, char *argv[]){
     if (argc != 2){
-        fprintf(stderr, "Usage: %s <init|list|add|get>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <init|list|add|get|delete>\n", argv[0]);
         return 1;
     }
 
@@ -398,15 +454,23 @@ int main(int argc, char *argv[]){
         } else if (add_entry(password) == 0) {
             result = 0;
         }
-        } else if (strcmp(argv[1], "get") == 0) {
+    } else if (strcmp(argv[1], "get") == 0) {
         if (read_password("Master password: ", password,
                           sizeof(password)) != 0) {
             fprintf(stderr, "Could not read password or input was invalid.\n");
         } else if (get_entry(password) == 0) {
             result = 0;
         }
+    } else if (strcmp(argv[1], "delete") == 0) {
+        if (read_password("Master password: ", password,
+                          sizeof(password)) != 0) {
+            fprintf(stderr, "Could not read password or input was invalid.\n");
+        } else if (delete_entry(password) == 0) {
+            result = 0;
+        }
     } else {
-        fprintf(stderr, "Unknown command. Available commands: init, add, list, get.\n");
+        fprintf(stderr,
+                "Unknown command. Available commands: init, add, list, get, delete.\n");
     }
 
     sodium_memzero(password, sizeof(password));
