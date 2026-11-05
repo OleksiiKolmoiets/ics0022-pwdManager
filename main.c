@@ -275,7 +275,9 @@ static int list_vault(const char *password)
     if (vault.count == 0) {
         puts("Vault is empty.");
     } else {
-        puts("Vault unlocked.");
+        for (size_t i = 0; i < vault.count; i++) {
+            printf("%s\n", vault.entries[i].service);
+        }
     }
 
     vault_close(&vault);
