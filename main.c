@@ -325,9 +325,41 @@ static int add_entry(const char *password)
     return result;
 }
 
+static int get_entry(const char *password)
+{
+    Vault vault;
+
+    if (vault_open(password, &vault) != 0) {
+        return -1;
+    }
+
+    char service[MAX_SERVICE_LENGTH + 1];
+
+    if (read_text("Service: ", service, sizeof(service)) != 0) {
+        fprintf(stderr, "Invalid service name.\n");
+        vault_close(&vault);
+        return -1;
+    }
+
+    for (size_t i = 0; i < vault.count; i++) {
+        if (strcmp(vault.entries[i].service, service) == 0) {
+            printf("Service: %s\n", vault.entries[i].service);
+            printf("Username: %s\n", vault.entries[i].username);
+            puts("Password: ********");
+
+            vault_close(&vault);
+            return 0;
+        }
+    }
+
+    fprintf(stderr, "No entry found for this service.\n");
+    vault_close(&vault);
+    return -1;
+}
+
 int main(int argc, char *argv[]){
     if (argc != 2){
-        fprintf(stderr, "Usage: %s <init|list|add>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <init|list|add|get>\n", argv[0]);
         return 1;
     }
 
@@ -366,8 +398,15 @@ int main(int argc, char *argv[]){
         } else if (add_entry(password) == 0) {
             result = 0;
         }
+        } else if (strcmp(argv[1], "get") == 0) {
+        if (read_password("Master password: ", password,
+                          sizeof(password)) != 0) {
+            fprintf(stderr, "Could not read password or input was invalid.\n");
+        } else if (get_entry(password) == 0) {
+            result = 0;
+        }
     } else {
-        fprintf(stderr, "Unknown command. Available commands: init, add, list.\n");
+        fprintf(stderr, "Unknown command. Available commands: init, add, list, get.\n");
     }
 
     sodium_memzero(password, sizeof(password));
