@@ -11,6 +11,8 @@ int read_password(const char *prompt, char *password, size_t size){
     int ch;
     int invalid = 0;
 
+    sodium_memzero(password, size);
+
     if (size < 2){
         return -1;
     }
@@ -42,6 +44,7 @@ int read_password(const char *prompt, char *password, size_t size){
     printf("\n");
 
     if (restored != 0 || ch == EOF || invalid || length == 0){
+        sodium_memzero(password, size);
         return -1;
     }
 

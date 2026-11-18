@@ -1,8 +1,19 @@
+#define _POSIX_C_SOURCE 200809L
+
+#include <errno.h>
+#include <fcntl.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "pwmgr.h"
+
+extern char **environ;
+
+static int copy_to_clipboard(const char *password);
 
 int open_vault_directory(void)
 {
@@ -345,9 +356,19 @@ static int get_entry(const char *password)
         if (strcmp(vault.entries[i].service, service) == 0) {
             printf("Service: %s\n", vault.entries[i].service);
             printf("Username: %s\n", vault.entries[i].username);
-            puts("Password: ********");
+
+            int result = copy_to_clipboard(vault.entries[i].password);
 
             vault_close(&vault);
+
+            if (result != 0) {
+                fprintf(stderr,
+                        "Could not copy the password to the clipboard.\n");
+                return -1;
+            }
+
+            puts("Password copied to the clipboard. "
+                 "Paste it, then clear the clipboard.");
             return 0;
         }
     }
@@ -355,6 +376,73 @@ static int get_entry(const char *password)
     fprintf(stderr, "No entry found for this service.\n");
     vault_close(&vault);
     return -1;
+}
+
+static int copy_to_clipboard(const char *password)
+{
+    int fds[2];
+
+    if (!valid_field(password, MAX_PASSWORD_LENGTH + 1) || pipe(fds) != 0) {
+        return -1;
+    }
+    
+    size_t length = strlen(password);
+    ssize_t written;
+
+    do {
+        written = write(fds[1], password, length);
+    } while (written < 0 && errno == EINTR);
+
+    int closed = close(fds[1]);
+
+    if (written < 0 || (size_t)written != length || closed != 0) {
+        close(fds[0]);
+        return -1;
+    }
+
+    posix_spawn_file_actions_t actions;
+
+    if (posix_spawn_file_actions_init(&actions) != 0) {
+        close(fds[0]);
+        return -1;
+    }
+
+    pid_t child;
+    char *const arguments[] = {
+        "xclip", "-selection", "clipboard", "-in", NULL
+    };
+    int result = -1;
+
+    if (posix_spawn_file_actions_adddup2(
+            &actions, fds[0], STDIN_FILENO) == 0 &&
+        posix_spawn_file_actions_addclose(
+            &actions, fds[0]) == 0 &&
+        posix_spawn_file_actions_addopen(
+            &actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0) == 0 &&
+        posix_spawn_file_actions_addopen(
+            &actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0) == 0) {
+        result = posix_spawn(
+            &child, "/usr/bin/xclip", &actions, NULL,
+            arguments, environ);
+    }
+
+    posix_spawn_file_actions_destroy(&actions);
+    close(fds[0]);
+
+    if (result != 0) {
+        return -1;
+    }
+
+    int status;
+    pid_t waited;
+
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+
+    return waited == child &&
+           WIFEXITED(status) &&
+           WEXITSTATUS(status) == 0 ? 0 : -1;
 }
 
 static int delete_entry(const char *password)
@@ -421,6 +509,11 @@ int main(int argc, char *argv[]){
 
     if (sodium_init() < 0){
         fprintf(stderr, "Could not initialise libsodium.\n");
+        return 1;
+    }
+
+    if (setvbuf(stdin, NULL, _IONBF, 0) != 0) {
+        fprintf(stderr, "Could not configure input.\n");
         return 1;
     }
 

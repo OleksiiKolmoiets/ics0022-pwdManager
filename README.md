@@ -13,7 +13,10 @@ The program supports one local user and five commands: `init`, `add`, `list`, `g
 
 `list` - unlocks the vault and lists service names only.
 
-`get` - unlocks the vault and asks for a service name. It currently displays the service, username and a fixed password mask (`********`). It does not reveal or copy the stored password. Clipboard retrieval is planned for Checkpoint 3 so that passwords can be used without printing them in cleartext.
+`get` - unlocks the vault and asks for a service name. It displays the
+service and username, then copies the password to the clipboard using
+`xclip`. The password is passed through a pipe without a shell and is
+not printed in the terminal or included in command-line arguments.
 
 `delete` - unlocks the vault and asks for a service name. It removes the entry only after the user types exactly `yes`, then encrypts and saves the updated vault. Other answers cancel deletion. Deleting the final entry leaves a valid empty vault.
 
@@ -24,6 +27,9 @@ The program supports one local user and five commands: `init`, `add`, `list`, `g
 - Each field must be nonempty and contain printable ASCII characters. Spaces are allowed. Tabs, newlines and other control characters are rejected within fields.
 - Service names are case-sensitive. `Email` and `email` are distinct names.
 - `get` is currently a masked lookup. Usable password retrieval through the clipboard is remaining work for Checkpoint 3.
+- The clipboard does not clear automatically. Replace its contents
+after pasting. Clipboard history and synchronization can retain
+ passwords even after the current clipboard is replaced.
 
 ## Architecture
 
@@ -142,7 +148,7 @@ The target platform is Linux, with GCC and the libsodium development library. On
 
 ```bash
 sudo apt update
-sudo apt install build-essential libsodium-dev
+sudo apt install build-essential libsodium-dev xclip
 ```
 
 On Windows, use a Linux environment such as Ubuntu in WSL for these commands.
