@@ -1,4 +1,15 @@
+# Compiled programs
 /pwmgr
+/pwmgr_debug
 /test_crypto
 /test_storage
-/pwmgr_debug
+
+# Compiled object files
+*.o
+
+# Python cache
+__pycache__/
+
+# Local vault data
+/.pwmgr/
+*.pmv
