@@ -21,19 +21,19 @@ int open_vault_directory(void)
     char directory[4096];
 
     if (home == NULL || home[0] != '/') {
-        fprintf(stderr, "HOME must contain an absolute path.\n");
+        fprintf(stderr, "Could not access the vault.\n");
         return -1;
     }
 
     int written = snprintf(directory, sizeof(directory), "%s/.pwmgr", home);
 
     if (written < 0 || (size_t)written >= sizeof(directory)) {
-        fprintf(stderr, "Vault directory path is too long.\n");
+        fprintf(stderr, "Could not access the vault.\n");
         return -1;
     }
 
     if (storage_open(directory) != 0) {
-        fprintf(stderr, "Could not open or lock the vault directory.\n");
+        fprintf(stderr, "Could not access the vault.\n");
         return -1;
     }
 
@@ -92,6 +92,12 @@ static int parse_entries(char *text, Vault *vault)
             !valid_field(username, sizeof(entry->username)) ||
             !valid_field(password, sizeof(entry->password))) {
             return -1;
+        }
+
+        for (size_t i = 0; i < vault->count; i++) {
+            if (strcmp(vault->entries[i].service, line) == 0) {
+                return -1;
+            }
         }
 
         memcpy(entry->service, line, strlen(line) + 1);
@@ -163,12 +169,12 @@ int vault_open(const char *password, Vault *vault)
     int read_result = storage_read(file_data, sizeof(file_data), &file_length);
 
     if (read_result == 1) {
-        fprintf(stderr, "No vault found. Run ./pwmgr init first.\n");
+        fprintf(stderr, "Could not unlock the vault.\n");
     } else if (read_result != 0) {
-        fprintf(stderr, "Could not read the vault.\n");
+        fprintf(stderr, "Could not unlock the vault.\n");
     } else if (file_length < VAULT_HEADER_SIZE + crypto_secretbox_MACBYTES ||
                memcmp(file_data, "PMC1", 4) != 0) {
-        fprintf(stderr, "Invalid vault format.\n");
+        fprintf(stderr, "Could not unlock the vault.\n");
     } else {
         memcpy(vault->salt, file_data + 4, sizeof(vault->salt));
 
@@ -179,18 +185,20 @@ int vault_open(const char *password, Vault *vault)
         size_t plaintext_length = ciphertext_length - crypto_secretbox_MACBYTES;
 
         if (derive_key(password, vault->salt, vault->key) != 0) {
-            fprintf(stderr, "Could not derive the vault key.\n");
+            fprintf(stderr, "Could not unlock the vault.\n");
         } else if (decrypt_data(ciphertext, ciphertext_length, vault->key,
                                 nonce, plaintext, MAX_VAULT_SIZE) != 0) {
-            fprintf(stderr, "Wrong master password or damaged vault.\n");
+            log_event("authentication", "failure");
+            fprintf(stderr, "Could not unlock the vault.\n");
         } else if (memchr(plaintext, '\0', plaintext_length) != NULL) {
-            fprintf(stderr, "Invalid credential data.\n");
+            fprintf(stderr, "Could not unlock the vault.\n");
         } else {
             plaintext[plaintext_length] = '\0';
 
             if (parse_entries((char *)plaintext, vault) != 0) {
-                fprintf(stderr, "Invalid credential data.\n");
+                fprintf(stderr, "Could not unlock the vault.\n");
             } else {
+                log_event("authentication", "success");
                 result = 0;
             }
         }
@@ -214,7 +222,7 @@ int vault_save(const Vault *vault)
 
     if (serialize_entries(vault, plaintext, sizeof(plaintext),
                           &plaintext_length) != 0) {
-        fprintf(stderr, "Invalid entries or vault capacity exceeded.\n");
+        fprintf(stderr, "Could not save the vault.\n");
     } else {
         memcpy(file_data, "PMC1", 4);
         memcpy(file_data + 4, vault->salt, sizeof(vault->salt));
@@ -224,7 +232,7 @@ int vault_save(const Vault *vault)
 
         if (encrypt_data(plaintext, plaintext_length, vault->key, nonce,
                          ciphertext, sizeof(file_data) - VAULT_HEADER_SIZE) != 0) {
-            fprintf(stderr, "Could not encrypt the vault.\n");
+            fprintf(stderr, "Could not save the vault.\n");
         } else {
             size_t file_length = VAULT_HEADER_SIZE +
                                  crypto_secretbox_MACBYTES + plaintext_length;
@@ -260,12 +268,12 @@ static int create_vault(const char *password){
 
     int result = -1;
     if (derive_key(password, salt, key) != 0) {
-        fprintf(stderr, "Could not derive the vault key.\n");
+        fprintf(stderr, "Could not create the vault.\n");
     } else if (encrypt_data(empty, 0, key, nonce,
                             ciphertext, crypto_secretbox_MACBYTES) != 0) {
-        fprintf(stderr, "Could not encrypt the empty vault.\n");
+        fprintf(stderr, "Could not create the vault.\n");
     } else if (storage_save(vault, sizeof(vault), 1) != 0) {
-        fprintf(stderr, "Could not create the vault. It may already exist.\n");
+        fprintf(stderr, "Could not create the vault.\n");
     } else {
         result = 0;
     }
@@ -481,7 +489,7 @@ static int delete_entry(const char *password)
         strcmp(confirmation, "yes") != 0) {
         puts("Deletion cancelled.");
         vault_close(&vault);
-        return 0;
+        return 1;
     }
 
     for (size_t i = index; i + 1 < vault.count; i++) {
@@ -507,19 +515,35 @@ int main(int argc, char *argv[]){
         return 1;
     }
 
+    if (strcmp(argv[1], "init") != 0 &&
+        strcmp(argv[1], "add") != 0 &&
+        strcmp(argv[1], "list") != 0 &&
+        strcmp(argv[1], "get") != 0 &&
+        strcmp(argv[1], "delete") != 0) {
+        fprintf(stderr,
+                "Unknown command. Use init, add, list, get or delete.\n");
+        return 1;
+    }
+
+    if (getuid() != geteuid() || getgid() != getegid()) {
+        fprintf(stderr, "Unsupported execution privileges.\n");
+        return 1;
+    }
+
     if (sodium_init() < 0){
-        fprintf(stderr, "Could not initialise libsodium.\n");
+        fprintf(stderr, "Could not start the password manager.\n");
         return 1;
     }
 
     if (setvbuf(stdin, NULL, _IONBF, 0) != 0) {
-        fprintf(stderr, "Could not configure input.\n");
+        fprintf(stderr, "Could not start the password manager.\n");
         return 1;
     }
 
     char password[MAX_PASSWORD_LENGTH + 1] = {0};
     char confirmation[MAX_PASSWORD_LENGTH + 1] = {0};
     int result = 1;
+    int cancelled = 0;
 
     if (strcmp(argv[1], "init") == 0){
         if (read_password("Choose a master password: ", password, sizeof(password)) != 0){
@@ -558,8 +582,13 @@ int main(int argc, char *argv[]){
         if (read_password("Master password: ", password,
                           sizeof(password)) != 0) {
             fprintf(stderr, "Could not read password or input was invalid.\n");
-        } else if (delete_entry(password) == 0) {
-            result = 0;
+        } else {
+            int deleted = delete_entry(password);
+
+            if (deleted >= 0) {
+                result = 0;
+                cancelled = deleted == 1;
+            }
         }
     } else {
         fprintf(stderr,
@@ -568,6 +597,14 @@ int main(int argc, char *argv[]){
 
     sodium_memzero(password, sizeof(password));
     sodium_memzero(confirmation, sizeof(confirmation));
+
+    const char *outcome = result == 0 ? "success" : "failure";
+
+    if (cancelled) {
+        outcome = "cancelled";
+    }
+
+    log_event(argv[1], outcome);
 
     return result;
 }

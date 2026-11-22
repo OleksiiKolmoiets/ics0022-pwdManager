@@ -60,4 +60,6 @@ int vault_open(const char *password, Vault *vault);
 int vault_save(const Vault *vault);
 void vault_close(Vault *vault);
 
+void log_event(const char *operation, const char *result);
+
 #endif

@@ -6,6 +6,8 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <time.h>
 
 #include "pwmgr.h"
 
@@ -193,4 +195,85 @@ int storage_save(const unsigned char *data, size_t length, int create_only){
     }
 
     return fsync(directory_fd) == 0 ? 0 : -1;
+}
+
+void log_event(const char *operation, const char *result)
+{
+    int log_directory = -1;
+    int log_fd = -1;
+    int failed = 1;
+    struct stat info;
+    const char *home = getenv("HOME");
+    char directory[4096];
+    char timestamp[32];
+    char line[128];
+    struct tm utc;
+    time_t now = time(NULL);
+
+    if (home == NULL || home[0] != '/' || now == (time_t)-1 ||
+        gmtime_r(&now, &utc) == NULL ||
+        strftime(timestamp, sizeof(timestamp),
+                 "%Y-%m-%dT%H:%M:%SZ", &utc) == 0) {
+        goto cleanup;
+    }
+
+    int length = snprintf(directory, sizeof(directory), "%s/.pwmgr", home);
+
+    if (length < 0 || (size_t)length >= sizeof(directory)) {
+        goto cleanup;
+    }
+
+    if (mkdir(directory, 0700) != 0 && errno != EEXIST) {
+        goto cleanup;
+    }
+
+    log_directory = open(directory,
+                         O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+
+    if (log_directory < 0 || fstat(log_directory, &info) != 0 ||
+        !S_ISDIR(info.st_mode) || info.st_uid != geteuid() ||
+        (info.st_mode & 07777) != 0700) {
+        goto cleanup;
+    }
+
+    log_fd = openat(log_directory, "events.log",
+                    O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW |
+                    O_NONBLOCK | O_CLOEXEC, 0600);
+
+    if (log_fd < 0 || check_file(log_fd, &info) != 0) {
+        goto cleanup;
+    }
+
+    length = snprintf(line, sizeof(line),
+                       "timestamp=%s operation=%s result=%s\n",
+                       timestamp, operation, result);
+
+    if (length < 0 || (size_t)length >= sizeof(line)) {
+        goto cleanup;
+    }
+
+    ssize_t written;
+
+    do {
+        written = write(log_fd, line, (size_t)length);
+    } while (written < 0 && errno == EINTR);
+
+    if (written != length || fsync(log_fd) != 0) {
+        goto cleanup;
+    }
+
+    failed = 0;
+
+cleanup:
+    if (log_fd >= 0 && close(log_fd) != 0) {
+        failed = 1;
+    }
+
+    if (log_directory >= 0 && close(log_directory) != 0) {
+        failed = 1;
+    }
+
+    if (failed) {
+        fprintf(stderr, "Could not write the event log.\n");
+    }
 }
