@@ -1,4 +1,4 @@
-# Password Manager — Checkpoint 2
+# Password Manager — Checkpoint 3
 
 ## Project idea
 
@@ -26,10 +26,8 @@ not printed in the terminal or included in command-line arguments.
 - Service names up to 64 characters, usernames up to 128, and passwords up to 128.
 - Each field must be nonempty and contain printable ASCII characters. Spaces are allowed. Tabs, newlines and other control characters are rejected within fields.
 - Service names are case-sensitive. `Email` and `email` are distinct names.
-- `get` is currently a masked lookup. Usable password retrieval through the clipboard is remaining work for Checkpoint 3.
-- The clipboard does not clear automatically. Replace its contents
-after pasting. Clipboard history and synchronization can retain
- passwords even after the current clipboard is replaced.
+- Clipboard retrieval requires `/usr/bin/xclip` and a working X display. Without one, `get` reports a clipboard error.
+- The clipboard does not clear automatically. Replace its contents after pasting. Clipboard history and synchronization can retain passwords even after the current clipboard is replaced.
 
 ## Architecture
 
@@ -38,6 +36,7 @@ after pasting. Clipboard history and synchronization can retain
 The password manager has only one local user; thus, registration, usernames, roles or an account database are not required.
 
 It:
+
 - Reads master and credential passwords without showing them in the terminal.
 - Reads visible service names and usernames through bounded input.
 - Rejects empty, overlong and non-printable-ASCII input.
@@ -50,6 +49,7 @@ The command code in `main.c` requests master-password confirmation during `init`
 This module turns readable entries into encrypted data and converts them back when the correct master password is provided.
 
 It has two main jobs:
+
 - Key derivation: the module uses Argon2id to turn the master password and salt into an encryption key.
 - Encryption and decryption: the module uses the libsodium library to encrypt the entries or verify and decrypt an existing vault.
 
@@ -68,12 +68,13 @@ It:
 - Saves updated encrypted data.
 - Checks ownership, permissions, file type, hard-link count and file-operation errors.
 - Holds an exclusive lock during each record operation so cooperating program instances cannot overwrite each other’s changes.
+- Writes structured event records to a private log file without credential contents.
 
 The vault location is `~/.pwmgr/vault.pmv`. The directory uses `0700` permissions and the vault uses `0600`. A separate `vault.lock` file coordinates access. Unsafe ownership, permissions or file types are rejected.
 
-The storage layer only receives encrypted bytes and writes them or reads encrypted bytes and returns them.
+The vault read and write functions handle encrypted bytes only. The same module handles event logging separately in `~/.pwmgr/events.log`, which uses `0600` permissions. Each record contains a UTC timestamp, operation and result. Authentication results, command results and cancelled deletions are logged; service names, usernames, passwords and keys are excluded. Logging failure produces a generic warning without changing the command result.
 
-To avoid overwriting the existing file, it writes the new encrypted data to a temporary file in the same directory, synchronizes it to disk, and then replaces the old vault.
+To avoid partially overwriting the existing vault, it writes the new encrypted data to a temporary file in the same directory, synchronizes it to disk, and then replaces the old vault. The directory is synchronized after publishing the update. Initial creation refuses to replace an existing vault.
 
 ### 4. Main module `main.c`
 
@@ -95,16 +96,16 @@ To avoid overwriting the existing file, it writes the new encrypted data to a te
 | 5 | Vault at rest | A symlink or a file changed between checking and opening redirects access. | Use a private directory, reject symlinks and check the opened file using `fstat()`. Avoid checking a pathname and then reopening it. |
 | 6 | Vault in memory | Credentials remain in memory after use. | Minimize their lifetime and unnecessary copies. Clear sensitive buffers with `sodium_memzero()` before freeing them or exiting. |
 | 7 | Vault in memory | A buffer overflow exposes or corrupts sensitive memory. | Use bounded input, check buffer sizes before copying data, reserve space for null terminators and validate array indexes. |
-| 8 | Vault in memory | Incorrect memory handling causes invalid access or crashes. | Initialize pointers, check allocation results, free memory exactly once and never access freed memory. |
-| 9 | Interface | Output accidentally exposes passwords. | Make `list` show service names only and `get` show the username with a fixed password mask. Add explicit clipboard retrieval in Checkpoint 3. |
+| 8 | Vault in memory | Incorrect memory handling causes invalid access or crashes. | Use fixed-size arrays, initialize structures, validate lengths and indexes, check return values and clear sensitive buffers on relevant exit paths. |
+| 9 | Interface | Output accidentally exposes passwords. | Make `list` show service names only. Make `get` display the service and username and copy the password through a pipe to `xclip`, without a shell, password arguments or terminal password output. Document clipboard history and manual clearing. |
 | 10 | Interface | Special characters manipulate terminal output or break the file format. | Accept printable ASCII characters only. Reject tabs, newlines and control characters. Use fixed output formats such as `printf("%s", value)`. |
-| 11 | Interface | An error message reveals sensitive data. | Use fixed error messages without passwords, keys or decrypted contents, such as “Wrong master password or damaged vault.” |
+| 11 | Interface | An error message reveals sensitive data. | Use fixed messages without passwords, keys or decrypted contents. Wrong passwords and damaged vaults use the same message: “Could not unlock the vault.” |
 
 ## Vault Format
 
 Each entry contains three fields: service name, username and password.
 
-Before encryption, each entry will be represented as fields separated with TABs: `<Service name><TAB><Username><TAB><Password><NEWLINE>`.
+Before encryption, each entry is represented as fields separated with TABs: `<Service name><TAB><Username><TAB><Password><NEWLINE>`.
 
 NEWLINE is used as an entry separator.
 
@@ -124,7 +125,7 @@ The application uses libsodium for key derivation, encryption and random-value g
 | Nonce | 24 fresh random bytes for every save; must never repeat with the same key |
 | Authentication tag | 16 bytes, used to detect tampering or an incorrect key |
 
-The master password and derived key will never be stored on disk. The salt and nonce are public and will be saved with the encrypted data.
+The application does not explicitly write the master password or derived key to its files. The salt and nonce are public and are saved with the encrypted data. Clearing application buffers does not guarantee removal of copies in swap, core dumps or other operating-system storage.
 
 ### Vault file layout
 
@@ -148,17 +149,17 @@ The target platform is Linux, with GCC and the libsodium development library. On
 
 ```bash
 sudo apt update
-sudo apt install build-essential libsodium-dev xclip
+sudo apt install build-essential libsodium-dev xclip python3 python3-pexpect
 ```
 
-On Windows, use a Linux environment such as Ubuntu in WSL for these commands.
+On Windows, use a Linux environment such as Ubuntu in WSL for these commands. `xclip` additionally requires a working X display for clipboard retrieval. Python and `pexpect` are used by the CLI tests.
 
 ### Build
 
 From the repository directory containing `main.c`, `auth.c`, `crypto.c` and `storage.c`, run:
 
 ```bash
-gcc -std=c11 -Wall -Wextra -Wpedantic -Werror=return-type \
+gcc -std=c11 -Wall -Wextra -Wpedantic -Werror \
     main.c auth.c crypto.c storage.c -lsodium -o pwmgr
 ```
 
@@ -178,6 +179,18 @@ Run the program as your normal user:
 
 Use `init` once to create `~/.pwmgr/vault.pmv`. Each later command will ask for the master password. Entry details will be entered through prompts.
 
+Run the automated tests from the repository directory:
+
+```bash
+sh run_tests.sh
+sh run_tests.sh --sanitize
+```
+
+The script builds the application and C tests with warnings treated as errors. The second command also enables AddressSanitizer and UndefinedBehaviorSanitizer. Crypto tests cover authenticated encryption, incorrect keys, tampering, buffer sizes and clearing failed-decryption output. Storage tests cover creation, overwrite protection and persistence. CLI tests cover record operations, authentication, input limits, permissions, symlinks, damaged vaults and logging without credential contents.
+
+Storage and CLI tests use temporary directories. The CLI suite deliberately disables the display and checks clipboard failure; successful clipboard copying must also be checked in a graphical session. After testing, use the normal build command above to restore an executable without sanitizers.
+
+
 ## Use of AI
 
-I used AI to learn more about cryptography concepts that I was less familiar with and to consult on the architecture and data flow of the program.
+I used AI to discuss cryptography, architecture and implementation choices, and to help with implementation, tests, project review and drafting documentation.
